@@ -62,7 +62,30 @@ def _video_duration(path: Path) -> float:
     return duration
 
 
+def _patch_quantized_repo_for_windows_py311(model_dir: Path) -> None:
+    """Repair pathlib class tags serialized by newer Python builds.
+
+    Some exported TRIBE v2 config.yaml files contain PyYAML object tags such as
+    `pathlib._local.WindowsPath`, which exist in newer Python versions but not
+    in Python 3.11. Rewriting those tags to the public pathlib classes preserves
+    the represented path while making the config loadable on our Windows 3.11
+    runtime.
+    """
+    config_path = model_dir / "config.yaml"
+    if not config_path.exists():
+        return
+    text = config_path.read_text(encoding="utf-8")
+    patched = (
+        text.replace("pathlib._local.WindowsPath", "pathlib.WindowsPath")
+            .replace("pathlib._local.PosixPath", "pathlib.PosixPath")
+            .replace("pathlib._local.Path", "pathlib.Path")
+    )
+    if patched != text:
+        config_path.write_text(patched, encoding="utf-8")
+
+
 def _load_quantized_tribe(model_dir: Path, cache_dir: Path, device: str):
+    _patch_quantized_repo_for_windows_py311(model_dir)
     loader_path = model_dir / "load_quantized_tribev2.py"
     if not loader_path.exists():
         raise FileNotFoundError(f"Quantized loader not found: {loader_path}")
