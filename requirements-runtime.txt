@@ -1,5 +1,5 @@
-# Runtime dependencies for the first local Windows MVP.
-# TRIBE v2 itself is installed from Meta's public GitHub repository.
+# Runtime dependencies for the first Windows MVP.
+# Keep the quantized V-JEPA2 path on recent Torch/TorchAO.
 torch>=2.11
 torchvision>=0.24
 torchao>=0.15
@@ -7,10 +7,22 @@ transformers>=4.53
 huggingface_hub>=0.34
 numpy>=2.2,<3
 pandas>=2.2
+pydantic>=2
 pyyaml>=6
 moviepy>=2.2.1
 matplotlib>=3.9
 nilearn>=0.12
 scipy>=1.14
 requests>=2.32
-git+https://github.com/facebookresearch/tribev2.git
+tqdm>=4.66
+einops
+gtts
+langdetect
+spacy
+soundfile
+Levenshtein
+julius
+x_transformers==1.27.20
+neuralset==0.0.2
+neuraltrain==0.0.2
+exca==0.5.20
