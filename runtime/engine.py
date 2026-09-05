@@ -84,6 +84,33 @@ def _patch_quantized_repo_for_windows_py311(model_dir: Path) -> None:
         config_path.write_text(patched, encoding="utf-8")
 
 
+def _install_quantized_loader_compat(module) -> None:
+    """Patch small config-schema drifts in third-party quantized loaders.
+
+    The current quantized package injects a top-level `device` key inside
+    data.image_feature / data.video_feature before instantiating Meta's
+    TribeModel. The official TRIBE v2 / neuralset schema used by this runner
+    rejects those keys with Pydantic `extra_forbidden`. Keep runtime device
+    selection in the loader/model itself, but strip only those unsupported
+    extractor config keys at the TribeModel construction boundary.
+    """
+    original = getattr(module, "TribeModel", None)
+    if original is None:
+        return
+
+    class CompatTribeModel(original):
+        def __init__(self, **kwargs):
+            data_cfg = kwargs.get("data")
+            if isinstance(data_cfg, dict):
+                for feature_name in ("image_feature", "video_feature"):
+                    feature_cfg = data_cfg.get(feature_name)
+                    if isinstance(feature_cfg, dict):
+                        feature_cfg.pop("device", None)
+            super().__init__(**kwargs)
+
+    module.TribeModel = CompatTribeModel
+
+
 def _load_quantized_tribe(model_dir: Path, cache_dir: Path, device: str):
     _patch_quantized_repo_for_windows_py311(model_dir)
     loader_path = model_dir / "load_quantized_tribev2.py"
@@ -95,6 +122,7 @@ def _load_quantized_tribe(model_dir: Path, cache_dir: Path, device: str):
         raise RuntimeError("Could not import the quantized TRIBE v2 loader.")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    _install_quantized_loader_compat(module)
     return module.load_quantized_tribev2(
         model_dir,
         device=device,
