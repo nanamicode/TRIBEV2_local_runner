@@ -1,103 +1,105 @@
-# TRIBE v2 Local Runner (Windows MVP)
+# TRIBE v2 Local Runner — Windows
 
-Local Windows runner for **TRIBE v2** brain-response prediction from video.
+Local desktop runner for **TRIBE v2** brain-response prediction from video.
 
-## Goal
+## Current status
 
-Turn the public TRIBE v2 research release into a local desktop workflow:
+The repository now contains the first executable-oriented MVP architecture:
 
-1. run a Windows installer/launcher;
-2. install a private Python runtime and dependencies under `%LOCALAPPDATA%\TRIBEv2LocalRunner`;
-3. download the model files on first use;
-4. choose a video;
-5. run local inference on CPU or NVIDIA CUDA;
-6. save:
-   - raw per-timepoint cortical predictions (`.npz`),
-   - a CSV timeline,
-   - a cortical activation PNG,
-   - a timeline PNG,
-   - a small HTML report.
+- Windows setup EXE built by GitHub Actions;
+- per-user/self-contained Python 3.11 installation;
+- automatic dependency installation;
+- automatic model download on first inference;
+- simple desktop UI: choose video -> choose output -> analyze;
+- quantized V-JEPA2/TRIBE-compatible **vision-only** path;
+- raw cortical prediction export;
+- timeline CSV;
+- fsaverage5 cortical activation images;
+- local HTML report.
 
-The first implementation deliberately defaults to a **vision-only TRIBE v2 path**. This avoids the gated Llama 3.2 text encoder and keeps the first MVP much more realistic on a normal desktop PC. The TRIBE checkpoint was trained with modality dropout and its feature configuration supports missing modalities, so this is a useful local path while keeping the original TRIBE v2 cortical head.
+**Important:** the code path is implemented, but it still needs a real Windows end-to-end validation run on target hardware before calling the MVP production-ready.
 
-## Runtime profile used by the MVP
+## Why this path
 
-The default model package is:
+Meta's official TRIBE v2 combines:
 
-- `Jessylg27/tribev2-lite-qv`
-- original `facebook/tribev2` brain checkpoint;
-- ViT-G-compatible V-JEPA2 video branch;
-- TorchAO `Int8WeightOnlyConfig`;
-- ~1.75 GB model package;
-- 1 Hz video event frequency / batch size 2.
+- Llama 3.2 3B text features;
+- Wav2Vec-BERT audio features;
+- V-JEPA2 ViT-G video features;
+- an 8-layer multimodal cortical encoder that predicts fsaverage5 activity.
 
-This profile keeps the video feature dimension expected by the untouched TRIBE v2 checkpoint.
+Running every branch is unnecessarily heavy for the first desktop MVP. The current version starts with video only and preserves the original cortical head.
 
-## Important licensing note
+The selected long-term optimization path is **native Rust**, using the public `eugenehp/tribev2-rs` work as the foundation for the cortical encoder. See [ARCHITECTURE.md](ARCHITECTURE.md).
 
-Meta's TRIBE v2 release and checkpoint are published under **CC BY-NC 4.0**. That means this repository is suitable for research/prototyping unless you have separate permission for commercial use. The runner does not remove or bypass that restriction.
+## First-run flow
 
-## Build
+1. Download `TRIBEv2LocalRunner-Setup.exe` from the GitHub Actions artifact.
+2. Run it.
+3. The setup installs a private Python runtime and local dependencies.
+4. Start the app.
+5. Select MP4/MOV/MKV/AVI/WEBM.
+6. Click **Analyze video locally**.
+7. On first use the model files are downloaded and cached.
+8. The result folder receives:
+   - `brain_predictions.npz`
+   - `timeline.csv`
+   - `brain_left_lateral.png`
+   - `brain_right_lateral.png`
+   - `activation_timeline.png`
+   - `run_metadata.json`
+   - `report.html`
 
-The Windows bootstrap executable is built with GitHub Actions:
+No inference VPS is required.
+
+## Build the Windows setup
+
+GitHub:
 
 ```
 Actions -> Build Windows bootstrap -> Run workflow
 ```
 
-Artifact: `TRIBEv2LocalRunner-Windows`.
+Artifact name:
 
-The bootstrap executable itself is intentionally small. On first run it downloads Python and the runtime dependencies, then launches the desktop app.
+```
+TRIBEv2LocalRunner-Windows
+```
 
-## Development run
+## Local development
 
-Windows, Python 3.11+:
+Windows / Python 3.11:
 
 ```powershell
 py -3.11 -m venv .venv
-.venv\Scripts\python -m pip install -U pip
+.venv\Scripts\python -m pip install -U pip setuptools wheel
 .venv\Scripts\pip install -r requirements-runtime.txt
+.venv\Scripts\pip install --no-deps https://github.com/facebookresearch/tribev2/archive/refs/heads/main.zip
 .venv\Scripts\python runtime\app.py
 ```
 
-## Architecture
+## Target hardware
 
-```
-bootstrap/installer.py
-  -> installs per-user Python 3.11 if needed
-  -> creates %LOCALAPPDATA%/TRIBEv2LocalRunner/env
-  -> installs runtime requirements
-  -> copies runtime files
-  -> creates Desktop shortcut
-  -> launches runtime/app.py
+Initial test target rather than a guaranteed minimum:
 
-runtime/app.py
-  -> native Tkinter UI
-  -> choose video/output folder
-  -> hardware profile + progress
-  -> invokes runtime/engine.py
+- Windows 10/11 x64;
+- 16 GB system RAM or more;
+- modern 6-core+ CPU;
+- SSD;
+- NVIDIA GPU is optional, but a recent CUDA-capable GPU with useful VRAM should materially improve the heavy visual encoder path.
 
-runtime/engine.py
-  -> downloads quantized TRIBE package from Hugging Face
-  -> loads packaged quantized V-JEPA2 branch
-  -> creates visual-only video events
-  -> executes TRIBE v2 cortical prediction
-  -> writes npz/csv metadata
+CPU-only is intentionally supported; it may simply take substantially longer than video duration on slower machines.
 
-runtime/visualize.py
-  -> creates aggregate fsaverage5 cortical maps
-  -> creates activation-over-time chart
-  -> generates a local HTML report
-```
+## Accuracy rule
 
-## What this is / is not
+The optimization goal is **not** to generate something that merely looks like a neural heatmap. Any quantization, lower-level port, smaller encoder or distillation must be compared against official TRIBE v2 outputs.
 
-TRIBE v2 predicts **fMRI-like cortical responses for an average subject** from stimuli. This runner therefore outputs a *model prediction* of cortical activity, not a measurement of the actual viewer's brain and not an EEG-style attention score.
+A visually convincing but feature-incompatible model is a failed optimization.
 
-## Next engineering steps
+## Semantics
 
-- validate the quantized Windows path against official FP32 TRIBE outputs on fixed clips;
-- add optional full multimodal mode (audio + transcript + Llama) behind a Hugging Face token/license step;
-- add DirectML/ONNX experiments if they preserve feature compatibility;
-- add resumable feature caching and chunk-level checkpointing for long videos;
-- benchmark CPU vs CUDA on several common desktop classes.
+TRIBE v2 outputs are predicted **fMRI-like cortical responses for an average subject**. They are not measurements of the actual brain activity of a viewer.
+
+## License warning
+
+Meta's TRIBE v2 release / pretrained weights are **CC BY-NC 4.0**. The runner does not bypass that restriction. If this becomes part of a commercial creative-analysis operation, the relevant permission/license must be resolved before deployment.
