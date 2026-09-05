@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import importlib.util
 import json
 import os
@@ -16,6 +17,40 @@ import pandas as pd
 
 
 MODEL_ID = "Jessylg27/tribev2-lite-qv"
+
+
+def _patch_exca_windows_uid_folders() -> None:
+    """Hash EXCA cache folder UIDs on Windows.
+
+    EXCA's default uid_folder() embeds the full extractor method name and a
+    verbose serialized config into the on-disk path. Even with a short cache
+    root, the total path can still exceed Windows path limits. Keep EXCA's
+    logical UID untouched for cache identity/config checks, but map the actual
+    folder to a stable SHA-256-derived short directory.
+    """
+    if os.name != "nt":
+        return
+
+    try:
+        from exca.base import BaseInfra
+    except Exception:
+        return
+
+    if getattr(BaseInfra, "_tribev2_short_uid_folders", False):
+        return
+
+    def _short_uid_folder(self, create: bool = False):
+        if self.folder is None:
+            return None
+        logical_uid = self.uid()
+        digest = hashlib.sha256(logical_uid.encode("utf-8")).hexdigest()[:32]
+        folder = Path(self.folder) / f"u-{digest}"
+        if create:
+            folder.mkdir(parents=True, exist_ok=True)
+        return folder
+
+    BaseInfra.uid_folder = _short_uid_folder
+    BaseInfra._tribev2_short_uid_folders = True
 
 
 def _short_feature_cache_dir() -> Path:
@@ -133,6 +168,7 @@ def _install_quantized_loader_compat(module) -> None:
 
 
 def _load_quantized_tribe(model_dir: Path, cache_dir: Path, device: str):
+    _patch_exca_windows_uid_folders()
     _patch_quantized_repo_for_windows_py311(model_dir)
     loader_path = model_dir / "load_quantized_tribev2.py"
     if not loader_path.exists():
