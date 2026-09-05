@@ -1,0 +1,39 @@
+name: Build Windows bootstrap
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "bootstrap/**"
+      - "runtime/**"
+      - "requirements-runtime.txt"
+      - ".github/workflows/build-windows.yml"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PyInstaller
+        run: python -m pip install pyinstaller
+
+      - name: Build bootstrap EXE
+        shell: cmd
+        run: >
+          pyinstaller --noconfirm --clean --onefile --windowed
+          --name TRIBEv2LocalRunner-Setup
+          --add-data "runtime;runtime"
+          --add-data "requirements-runtime.txt;."
+          bootstrap\installer.py
+
+      - name: Upload Windows executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: TRIBEv2LocalRunner-Windows
+          path: dist/TRIBEv2LocalRunner-Setup.exe
