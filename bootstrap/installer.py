@@ -17,6 +17,9 @@ PY_INSTALLER_URL = (
     f"https://www.python.org/ftp/python/{PY_VERSION}/"
     f"python-{PY_VERSION}-amd64.exe"
 )
+TRIBEV2_SOURCE_ZIP = (
+    "https://github.com/facebookresearch/tribev2/archive/refs/heads/main.zip"
+)
 
 
 def base_dir() -> Path:
@@ -29,15 +32,39 @@ def resource_dir() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def _candidate_version(python_exe: Path) -> tuple[int, int] | None:
+    try:
+        raw = subprocess.check_output(
+            [
+                str(python_exe),
+                "-c",
+                "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')",
+            ],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        major, minor = raw.split(".", 1)
+        return int(major), int(minor)
+    except Exception:
+        return None
+
+
 def find_python() -> Path | None:
     target = base_dir() / "python" / "python.exe"
-    if target.exists():
+    if target.exists() and _candidate_version(target) == (3, 11):
         return target
-    for cmd in (["py", "-3.11", "-c", "import sys;print(sys.executable)"], ["python", "-c", "import sys;print(sys.executable)"]):
+
+    probes = (
+        ["py", "-3.11", "-c", "import sys;print(sys.executable)"],
+        ["python", "-c", "import sys;print(sys.executable)"],
+    )
+    for cmd in probes:
         try:
-            out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL).strip()
+            out = subprocess.check_output(
+                cmd, text=True, stderr=subprocess.DEVNULL
+            ).strip()
             p = Path(out)
-            if p.exists() and sys.version_info[:2] >= (3, 11):
+            if p.exists() and _candidate_version(p) == (3, 11):
                 return p
         except Exception:
             pass
@@ -84,10 +111,23 @@ def install_runtime(py: Path, status):
     vpy = env / "Scripts" / "python.exe"
 
     status("Updating installer tools…")
-    subprocess.check_call([str(vpy), "-m", "pip", "install", "-U", "pip", "setuptools", "wheel"])
+    subprocess.check_call(
+        [str(vpy), "-m", "pip", "install", "-U", "pip", "setuptools", "wheel"]
+    )
 
-    status("Installing TRIBE v2 and local runtime (this can take a while)…")
-    subprocess.check_call([str(vpy), "-m", "pip", "install", "-r", str(req_src)])
+    status("Installing local inference dependencies (this can take a while)…")
+    subprocess.check_call(
+        [str(vpy), "-m", "pip", "install", "-r", str(req_src)]
+    )
+
+    # The official TRIBE v2 package metadata currently pins an older Torch
+    # range. Our quantized V-JEPA2 path requires a newer Torch/TorchAO stack,
+    # so install the official source code without letting pip downgrade Torch.
+    # Using the GitHub source ZIP also avoids requiring Git on the user's PC.
+    status("Installing the official TRIBE v2 source…")
+    subprocess.check_call(
+        [str(vpy), "-m", "pip", "install", "--no-deps", TRIBEV2_SOURCE_ZIP]
+    )
 
     status("Copying desktop app…")
     if app_dst.exists():
@@ -105,17 +145,23 @@ def install_runtime(py: Path, status):
 def main():
     win = tk.Tk()
     win.title(APP_NAME + " Setup")
-    win.geometry("620x260")
+    win.geometry("620x280")
     frame = ttk.Frame(win, padding=28)
     frame.pack(fill="both", expand=True)
     ttk.Label(frame, text=APP_NAME, font=("Segoe UI", 22, "bold")).pack(anchor="w")
     ttk.Label(
         frame,
-        text="One-time setup. Python, PyTorch, TRIBE v2 runtime and support packages will be installed for this Windows user.",
+        text=(
+            "One-time setup. A private Python 3.11 runtime, PyTorch/TorchAO, "
+            "the official TRIBE v2 code and support packages will be installed "
+            "for this Windows user."
+        ),
         wraplength=555,
     ).pack(anchor="w", pady=(8, 20))
     status_var = tk.StringVar(value="Ready to install.")
-    ttk.Label(frame, textvariable=status_var, wraplength=555).pack(anchor="w", pady=(0, 12))
+    ttk.Label(frame, textvariable=status_var, wraplength=555).pack(
+        anchor="w", pady=(0, 12)
+    )
     bar = ttk.Progressbar(frame, mode="indeterminate")
     bar.pack(fill="x")
 
