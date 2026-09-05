@@ -18,6 +18,27 @@ import pandas as pd
 MODEL_ID = "Jessylg27/tribev2-lite-qv"
 
 
+def _short_feature_cache_dir() -> Path:
+    """Return a deliberately short cache path for EXCA/neuralset on Windows.
+
+    EXCA encodes extractor configuration into cache folder names. On Windows,
+    the resulting full path can exceed the legacy MAX_PATH limit (260 chars)
+    even when each individual path component is valid. Keep the feature cache
+    close to LOCALAPPDATA so generated TRIBE/V-JEPA2 paths stay below that
+    limit without requiring registry changes or administrator privileges.
+    """
+    override = os.environ.get("TRIBEV2_FEATURE_CACHE")
+    if override:
+        path = Path(override)
+    elif os.name == "nt":
+        local = os.environ.get("LOCALAPPDATA") or str(Path.home())
+        path = Path(local) / "T2F"
+    else:
+        path = Path.home() / ".cache" / "tribev2" / "features"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 @dataclass
 class RunResult:
     output_dir: Path
@@ -168,6 +189,7 @@ def run_video(
     run_dir.mkdir(parents=True, exist_ok=True)
     cache_dir = root / ".tribev2-cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
+    feature_cache_dir = _short_feature_cache_dir()
 
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -184,7 +206,7 @@ def run_video(
     )
 
     _emit(progress_cb, f"Loading TRIBE v2 on {device.upper()}…", 0.20)
-    model = _load_quantized_tribe(model_dir, cache_dir / "features", device)
+    model = _load_quantized_tribe(model_dir, feature_cache_dir, device)
 
     _emit(progress_cb, "Reading video metadata…", 0.32)
     duration = _video_duration(video)
