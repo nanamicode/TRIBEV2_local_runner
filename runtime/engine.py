@@ -80,13 +80,25 @@ class RunResult:
     predictions_path: Path
     timeline_csv: Path
     metadata_path: Path
+    normalized_path: Path
+    report_path: Path
     n_timesteps: int
     n_vertices: int
     seconds_elapsed: float
 
 
-def _emit(cb: Callable[[str, float | None], None] | None, message: str, progress=None):
-    if cb:
+def _emit(
+    cb: Callable | None,
+    message: str,
+    progress: float | None = None,
+    stage: str | None = None,
+):
+    if not cb:
+        return
+    try:
+        cb(message, progress, stage)
+    except TypeError:
+        # Backward compatibility with the original 2-argument callback.
         cb(message, progress)
 
 
@@ -230,10 +242,20 @@ def run_video(
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    _emit(progress_cb, "Checking hardware…", 0.02)
+    _emit(
+        progress_cb,
+        "Checking local hardware and selecting the inference device…",
+        0.02,
+        "prepare",
+    )
     hardware = get_hardware_summary()
 
-    _emit(progress_cb, "Downloading/checking the quantized TRIBE v2 package…", 0.08)
+    _emit(
+        progress_cb,
+        "Checking the quantized TRIBE v2 package and local model cache…",
+        0.06,
+        "model_download",
+    )
     model_dir = Path(
         snapshot_download(
             repo_id=MODEL_ID,
@@ -241,14 +263,29 @@ def run_video(
         )
     )
 
-    _emit(progress_cb, f"Loading TRIBE v2 on {device.upper()}…", 0.20)
+    _emit(
+        progress_cb,
+        f"Loading the TRIBE v2 cortical model on {device.upper()}…",
+        0.14,
+        "model_load",
+    )
     model = _load_quantized_tribe(model_dir, feature_cache_dir, device)
 
-    _emit(progress_cb, "Reading video metadata…", 0.32)
+    _emit(
+        progress_cb,
+        "Reading video duration and preparing the stimulus timeline…",
+        0.24,
+        "video_prepare",
+    )
     duration = _video_duration(video)
     events = _make_visual_event(video, duration)
 
-    _emit(progress_cb, "Running cortical prediction…", 0.38)
+    _emit(
+        progress_cb,
+        "Encoding the video with V-JEPA2 and predicting cortical response…",
+        0.30,
+        "predict",
+    )
     predictions, segments = model.predict(events=events, verbose=False)
     predictions = np.asarray(predictions, dtype=np.float32)
 
@@ -256,7 +293,12 @@ def run_video(
         raise RuntimeError(f"Unexpected TRIBE v2 output shape: {predictions.shape}")
 
     n_timesteps, n_vertices = predictions.shape
-    _emit(progress_cb, "Saving raw predictions…", 0.86)
+    _emit(
+        progress_cb,
+        "Saving the full raw cortical prediction matrix…",
+        0.78,
+        "save_raw",
+    )
 
     pred_path = run_dir / "brain_predictions.npz"
     np.savez_compressed(
@@ -319,26 +361,57 @@ def run_video(
     metadata_path = run_dir / "run_metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
-    _emit(progress_cb, "Creating cortical maps and local report…", 0.90)
-    from visualize import create_report_assets
+    _emit(
+        progress_cb,
+        "Normalizing the cortical output into a compact AI-readable signature…",
+        0.84,
+        "normalize",
+    )
+    from normalize import build_normalized_package
 
-    create_report_assets(
+    normalized_path = build_normalized_package(
         predictions=predictions,
         timeline_csv=timeline_path,
         output_dir=run_dir,
         metadata=metadata,
     )
 
+    _emit(
+        progress_cb,
+        "Rendering cortical surfaces, key moments and the interactive report…",
+        0.91,
+        "visualize",
+    )
+    from visualize import create_report_assets
+
+    report_path = create_report_assets(
+        predictions=predictions,
+        timeline_csv=timeline_path,
+        output_dir=run_dir,
+        metadata=metadata,
+        normalized_path=normalized_path,
+    )
+
     elapsed = time.time() - started
     metadata["elapsed_seconds"] = elapsed
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    _emit(progress_cb, "Done.", 1.0)
+    metadata["normalized_output"] = str(normalized_path.name)
+    metadata["report"] = str(report_path.name)
+    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    _emit(
+        progress_cb,
+        "Analysis complete — raw brain data, normalized AI package and report are ready.",
+        1.0,
+        "done",
+    )
 
     return RunResult(
         output_dir=run_dir,
         predictions_path=pred_path,
         timeline_csv=timeline_path,
         metadata_path=metadata_path,
+        normalized_path=normalized_path,
+        report_path=report_path,
         n_timesteps=n_timesteps,
         n_vertices=n_vertices,
         seconds_elapsed=elapsed,
