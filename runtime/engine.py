@@ -658,56 +658,41 @@ def run_video(
     }
     _atomic_json(metadata_path, metadata)
 
-    normalized_path = run_dir / "chatgpt_brain_summary.json"
-    if normalized_path.exists():
-        _emit(
-            progress_cb,
-            "Recovered normalized AI package from disk.",
-            0.88,
-            "normalize",
-        )
-    else:
-        _emit(
-            progress_cb,
-            "Normalizing cortical output into a compact AI-readable signature…",
-            0.84,
-            "normalize",
-        )
-        from normalize import build_normalized_package
+    # Post-processing is intentionally regenerated on every launch. It is cheap
+    # compared with V-JEPA2/TRIBE inference and ensures improvements to peak
+    # detection, normalization or rendering are applied to already-cached runs.
+    _emit(
+        progress_cb,
+        "Rebuilding the normalized AI package from cached cortical predictions…",
+        0.84,
+        "normalize",
+    )
+    from normalize import build_normalized_package
 
-        normalized_path = build_normalized_package(
-            predictions=predictions,
-            timeline_csv=timeline_path,
-            output_dir=run_dir,
-            metadata=metadata,
-        )
-        state = _checkpoint(run_dir, state, "normalized")
+    normalized_path = build_normalized_package(
+        predictions=predictions,
+        timeline_csv=timeline_path,
+        output_dir=run_dir,
+        metadata=metadata,
+    )
+    state = _checkpoint(run_dir, state, "normalized")
 
-    report_path = run_dir / "report.html"
-    if report_path.exists() and normalized_path.exists():
-        _emit(
-            progress_cb,
-            "Recovered existing visual report from disk.",
-            0.96,
-            "visualize",
-        )
-    else:
-        _emit(
-            progress_cb,
-            "Rendering cortical surfaces, key moments and the interactive report…",
-            0.91,
-            "visualize",
-        )
-        from visualize import create_report_assets
+    _emit(
+        progress_cb,
+        "Rebuilding cortical surfaces, key moments and the interactive report…",
+        0.91,
+        "visualize",
+    )
+    from visualize import create_report_assets
 
-        report_path = create_report_assets(
-            predictions=predictions,
-            timeline_csv=timeline_path,
-            output_dir=run_dir,
-            metadata=metadata,
-            normalized_path=normalized_path,
-        )
-        state = _checkpoint(run_dir, state, "visualized")
+    report_path = create_report_assets(
+        predictions=predictions,
+        timeline_csv=timeline_path,
+        output_dir=run_dir,
+        metadata=metadata,
+        normalized_path=normalized_path,
+    )
+    state = _checkpoint(run_dir, state, "visualized")
 
     elapsed = time.time() - started
     metadata["elapsed_seconds"] = elapsed
