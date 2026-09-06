@@ -7,6 +7,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+# All rendering happens from the worker thread of the desktop app. Force a
+# non-interactive Matplotlib backend so Windows/Tk does not try to create GUI
+# figures outside Tkinter's main thread. This removes the "Starting a
+# Matplotlib GUI outside of the main thread" failure mode while still allowing
+# figures to be saved normally to PNG.
+import matplotlib
+matplotlib.use("Agg", force=True)
+
 
 def _save_timeline(
     timeline_csv: Path,
