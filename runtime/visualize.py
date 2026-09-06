@@ -207,6 +207,130 @@ def _save_peak_maps(
     return results
 
 
+def _save_trough_maps(
+    predictions: np.ndarray,
+    normalized: dict | None,
+    output_dir: Path,
+    max_events: int = 4,
+) -> list[dict]:
+    if not normalized:
+        return []
+
+    events = list(normalized.get("trough_events", []))
+    if not events:
+        return []
+
+    weakest = sorted(
+        events,
+        key=lambda x: float(x.get("global_response_z", 0.0)),
+    )[:max_events]
+    weakest.sort(key=lambda x: float(x.get("start_seconds", 0.0)))
+
+    try:
+        from nilearn import plotting
+        import matplotlib.pyplot as plt
+        fs = _load_surface_assets()
+    except Exception:
+        return []
+
+    half = predictions.shape[1] // 2
+    results: list[dict] = []
+    for rank, event in enumerate(weakest, start=1):
+        idx = int(event.get("timestep", 0))
+        if idx < 0 or idx >= len(predictions):
+            continue
+        values = np.abs(predictions[idx])
+        vmax = float(np.percentile(values, 99.0))
+        item = {
+            "rank": rank,
+            "timestep": idx,
+            "start_seconds": float(event.get("start_seconds", idx)),
+            "global_response_z": float(event.get("global_response_z", 0.0)),
+            "images": [],
+            "top_regions": event.get("top_regions", []),
+        }
+        for hemi, mesh, sulc, hemi_values in (
+            ("left", fs.infl_left, fs.sulc_left, values[:half]),
+            ("right", fs.infl_right, fs.sulc_right, values[half:]),
+        ):
+            out = output_dir / f"brain_trough_{rank:02d}_{hemi}.png"
+            display = plotting.plot_surf_stat_map(
+                mesh,
+                hemi_values,
+                hemi=hemi,
+                view="lateral",
+                bg_map=sulc,
+                colorbar=True,
+                title=f"Weak window {item['start_seconds']:.1f}s — {hemi}",
+                cmap="inferno",
+                vmax=vmax,
+                symmetric_cbar=False,
+            )
+            display.savefig(out, dpi=150)
+            plt.close(display.figure)
+            item["images"].append(out.name)
+        results.append(item)
+    return results
+
+
+def _save_moment_frames(
+    metadata: dict,
+    normalized: dict | None,
+    output_dir: Path,
+    max_per_kind: int = 4,
+) -> dict[tuple[str, int], str]:
+    if not normalized:
+        return {}
+
+    video_path = Path(str(metadata.get("video") or ""))
+    if not video_path.is_file():
+        return {}
+
+    events: list[tuple[str, dict]] = []
+    peaks = sorted(
+        normalized.get("peak_events", []),
+        key=lambda x: float(x.get("global_response_z", 0.0)),
+        reverse=True,
+    )[:max_per_kind]
+    troughs = sorted(
+        normalized.get("trough_events", []),
+        key=lambda x: float(x.get("global_response_z", 0.0)),
+    )[:max_per_kind]
+    events.extend(("peak", x) for x in peaks)
+    events.extend(("trough", x) for x in troughs)
+
+    if not events:
+        return {}
+
+    try:
+        from moviepy import VideoFileClip
+        from PIL import Image
+    except Exception:
+        return {}
+
+    outputs: dict[tuple[str, int], str] = {}
+    try:
+        with VideoFileClip(str(video_path)) as clip:
+            duration = float(clip.duration or 0.0)
+            for kind, event in events:
+                timestep = int(event.get("timestep", 0))
+                start = float(event.get("start_seconds", 0.0))
+                span = float(event.get("duration_seconds", 1.0))
+                t = start + min(0.5, max(0.0, span / 2.0))
+                if duration > 0:
+                    t = min(max(0.0, t), max(0.0, duration - 1e-3))
+                frame = np.asarray(clip.get_frame(t))
+                if frame.dtype != np.uint8:
+                    frame = np.clip(frame, 0, 255).astype(np.uint8)
+                out = output_dir / f"creative_{kind}_{timestep:03d}.jpg"
+                Image.fromarray(frame).save(out, quality=88, optimize=True)
+                outputs[(kind, timestep)] = out.name
+    except Exception:
+        return outputs
+
+    return outputs
+
+
 def _fallback_brain_vector(predictions: np.ndarray, output_dir: Path) -> list[Path]:
     import matplotlib.pyplot as plt
 
@@ -333,9 +457,14 @@ def _signature_cards(normalized: dict | None) -> str:
     return "".join(cards)
 
 
-def _peak_cards(peak_maps: list[dict]) -> str:
+def _event_cards(
+    items: list[dict],
+    kind: str,
+    frame_lookup: dict[tuple[str, int], str],
+) -> str:
     cards = []
-    for item in peak_maps:
+    label = "High-response moment" if kind == "peak" else "Low-response moment"
+    for item in items:
         regions = ", ".join(
             html.escape(
                 f"{r.get('name','?')} ({r.get('hemisphere','?')})"
@@ -343,22 +472,32 @@ def _peak_cards(peak_maps: list[dict]) -> str:
             for r in item.get("top_regions", [])[:3]
         )
         images = "".join(
-            f'<img src="{html.escape(name)}" alt="cortical peak">'
+            f'<img src="{html.escape(name)}" alt="cortical moment">'
             for name in item.get("images", [])
+        )
+        frame_name = frame_lookup.get((kind, int(item.get("timestep", 0))))
+        creative_frame = (
+            f'<img src="{html.escape(frame_name)}" alt="creative frame">'
+            if frame_name
+            else ""
         )
         cards.append(
             f"""
             <section class="peak-card">
               <div class="peak-head">
                 <strong>{item['start_seconds']:.1f}s</strong>
-                <span>relative response z = {item['global_response_z']:.2f}</span>
+                <span>{label} • relative response z = {item['global_response_z']:.2f}</span>
               </div>
-              <div class="brain-pair">{images}</div>
+              <div class="moment-layout">
+                <div class="creative-frame">{creative_frame}</div>
+                <div class="brain-pair">{images}</div>
+              </div>
               <p>Top cortical regions in this model window: {regions or 'atlas unavailable'}.</p>
             </section>
             """
         )
     return "".join(cards)
+
 
 
 def create_report_assets(
@@ -380,6 +519,8 @@ def create_report_assets(
     notes: list[str] = []
     interactive: list[Path] = []
     peak_maps: list[dict] = []
+    trough_maps: list[dict] = []
+    frame_lookup: dict[tuple[str, int], str] = {}
 
     # Static cortical maps are the core visualization and should remain usable
     # even if an optional renderer (for example Plotly) is unavailable.
@@ -397,7 +538,17 @@ def create_report_assets(
     try:
         peak_maps = _save_peak_maps(predictions, normalized, output_dir)
     except Exception as exc:
-        notes.append(f"Key-moment cortical maps unavailable: {exc}")
+        notes.append(f"High-response cortical maps unavailable: {exc}")
+
+    try:
+        trough_maps = _save_trough_maps(predictions, normalized, output_dir)
+    except Exception as exc:
+        notes.append(f"Low-response cortical maps unavailable: {exc}")
+
+    try:
+        frame_lookup = _save_moment_frames(metadata, normalized, output_dir)
+    except Exception as exc:
+        notes.append(f"Creative moment thumbnails unavailable: {exc}")
 
     brain_note = " ".join(notes)
 
@@ -503,8 +654,13 @@ pre {{ white-space:pre-wrap; color:#cbd1dc; font-size:12px; overflow:auto; }}
 </div>
 
 <div class="card">
-  <h2>Key neural moments</h2>
-  {_peak_cards(peak_maps) or '<p>No peak maps were available for this run.</p>'}
+  <h2>High-response moments</h2>
+  {_event_cards(peak_maps, "peak", frame_lookup) or '<p>No high-response maps were available for this run.</p>'}
+</div>
+
+<div class="card">
+  <h2>Low-response moments</h2>
+  {_event_cards(trough_maps, "trough", frame_lookup) or '<p>No low-response maps were available for this run.</p>'}
 </div>
 
 <div class="card">
