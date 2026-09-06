@@ -552,6 +552,8 @@ class App(tk.Tk):
         keys = [x[0] for x in STAGES]
         if stage not in keys:
             return
+        if self._current_stage == stage:
+            return
         self._current_stage = stage
         current_index = keys.index(stage)
 
@@ -643,7 +645,6 @@ class App(tk.Tk):
                 kind = item[0]
                 if kind == "progress":
                     _, msg, value, stage = item
-                    self.status.set(msg)
                     if stage:
                         self._set_stage(stage)
                     if value is not None:
