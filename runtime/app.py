@@ -760,6 +760,16 @@ class App(tk.Tk):
                     log.parent.mkdir(parents=True, exist_ok=True)
                     log.write_text(error, encoding="utf-8")
                     self._append_log(error, "error")
+
+                    # A post-processing failure must not hide a previously valid
+                    # neural checkpoint/report. Refresh cache-aware controls so the
+                    # user can immediately retry only the cheap stages or open the
+                    # last successful report.
+                    try:
+                        self._refresh_cache_status()
+                    except Exception:
+                        pass
+
                     messagebox.showerror(
                         APP_NAME,
                         "Falha no processamento. Log diagnóstico salvo em:\n" + str(log),
