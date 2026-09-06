@@ -199,6 +199,60 @@ def _peak_events(
     return events
 
 
+def _trough_events(
+    global_z: np.ndarray,
+    global_abs: np.ndarray,
+    starts: np.ndarray,
+    durations: np.ndarray,
+    per_time_regions: list[dict],
+) -> list[dict]:
+    """Identify locally weak response windows, including clip boundaries."""
+    try:
+        from scipy.signal import find_peaks
+
+        min_distance = max(1, int(round(len(global_z) / 12)))
+        indices, props = find_peaks(-global_z, prominence=0.65, distance=min_distance)
+        prominences = props.get("prominences", np.zeros_like(indices, dtype=float))
+        candidates = list(zip(indices.tolist(), prominences.tolist()))
+    except Exception:
+        candidates = []
+
+    if len(global_z) >= 2:
+        left_prominence = float(global_z[1] - global_z[0])
+        right_prominence = float(global_z[-2] - global_z[-1])
+        existing = {idx for idx, _ in candidates}
+        if global_z[0] < global_z[1] and left_prominence >= 0.65 and 0 not in existing:
+            candidates.append((0, left_prominence))
+        last = len(global_z) - 1
+        if global_z[-1] < global_z[-2] and right_prominence >= 0.65 and last not in existing:
+            candidates.append((last, right_prominence))
+
+    if not candidates and len(global_z):
+        candidates = [(int(i), float(-global_z[i])) for i in np.argsort(global_z)[:5]]
+
+    candidates.sort(key=lambda x: (global_z[x[0]], -x[1]))
+    events: list[dict] = []
+    for idx, prominence in candidates[:8]:
+        top_regions = (
+            per_time_regions[idx]["top_regions"][:4]
+            if idx < len(per_time_regions)
+            else []
+        )
+        events.append(
+            {
+                "timestep": int(idx),
+                "start_seconds": _safe_float(starts[idx]),
+                "duration_seconds": _safe_float(durations[idx]),
+                "global_response_z": _safe_float(global_z[idx]),
+                "mean_abs_response": _safe_float(global_abs[idx]),
+                "prominence": _safe_float(prominence),
+                "top_regions": top_regions,
+            }
+        )
+    events.sort(key=lambda x: x["start_seconds"])
+    return events
+
+
 def _creative_signature(
     global_abs: np.ndarray,
     global_z: np.ndarray,
@@ -208,6 +262,7 @@ def _creative_signature(
     right_abs: np.ndarray,
     concentration: np.ndarray,
     peak_events: list[dict],
+    trough_events: list[dict],
 ) -> dict:
     total_duration = float((starts + durations).max()) if len(starts) else 0.0
     early_mask = starts < min(3.0, max(total_duration, 0.0))
@@ -220,6 +275,7 @@ def _creative_signature(
     denom = left_abs + right_abs + 1e-12
     hemispheric_balance = float(np.mean((right_abs - left_abs) / denom)) if len(denom) else 0.0
     peak_density = (len(peak_events) / total_duration * 10.0) if total_duration > 0 else 0.0
+    trough_density = (len(trough_events) / total_duration * 10.0) if total_duration > 0 else 0.0
 
     def masked_mean(mask: np.ndarray) -> float:
         if not len(global_z) or not np.any(mask):
@@ -230,9 +286,11 @@ def _creative_signature(
         "normalization_scope": "within_clip",
         "mean_abs_response": _safe_float(global_abs.mean() if len(global_abs) else 0.0),
         "peak_global_response_z": _safe_float(global_z.max() if len(global_z) else 0.0),
+        "trough_global_response_z": _safe_float(global_z.min() if len(global_z) else 0.0),
         "sustained_high_response_fraction": _safe_float(sustained),
         "above_median_response_fraction": _safe_float(positive),
         "peak_density_per_10_seconds": _safe_float(peak_density),
+        "trough_density_per_10_seconds": _safe_float(trough_density),
         "temporal_change_rate": _safe_float(change_rate),
         "spatial_concentration_top10pct_share": _safe_float(
             concentration.mean() if len(concentration) else 0.0
@@ -285,6 +343,13 @@ def build_normalized_package(
         durations,
         per_time_regions,
     )
+    trough_events = _trough_events(
+        global_z,
+        global_abs,
+        starts,
+        durations,
+        per_time_regions,
+    )
     signature = _creative_signature(
         global_abs,
         global_z,
@@ -294,6 +359,7 @@ def build_normalized_package(
         right_abs,
         concentration,
         peak_events,
+        trough_events,
     )
 
     windows: list[dict] = []
@@ -344,6 +410,7 @@ def build_normalized_package(
         },
         "creative_signature": signature,
         "peak_events": peak_events,
+        "trough_events": trough_events,
         "top_regions_overall": regions[:30],
         "time_windows": windows,
         "atlas": {
