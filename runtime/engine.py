@@ -477,6 +477,36 @@ def _load_raw_checkpoint(pred_path: Path, timeline_path: Path):
         return None
 
 
+def get_cached_run_status(video_path: str | Path, output_root: str | Path) -> dict:
+    """Inspect whether an existing run can skip expensive neural inference."""
+    video = Path(video_path)
+    root = Path(output_root)
+    if not video.is_file():
+        return {"exists": False, "raw_complete": False, "run_dir": None}
+    try:
+        fingerprint = _video_fingerprint(video)
+        run_dir = _stable_run_dir(root, video, fingerprint)
+        pred_path = run_dir / "brain_predictions.npz"
+        timeline_path = run_dir / "timeline.csv"
+        raw_complete = _load_raw_checkpoint(pred_path, timeline_path) is not None
+        state = _read_state(run_dir) if run_dir.exists() else {}
+        return {
+            "exists": run_dir.exists(),
+            "raw_complete": raw_complete,
+            "run_dir": str(run_dir),
+            "stage": state.get("stage"),
+            "attempts": state.get("attempts", 0),
+            "fingerprint": fingerprint,
+        }
+    except Exception as exc:
+        return {
+            "exists": False,
+            "raw_complete": False,
+            "run_dir": None,
+            "error": str(exc),
+        }
+
+
 def run_video(
     video_path: str | Path,
     output_root: str | Path,
@@ -676,6 +706,18 @@ def run_video(
         metadata=metadata,
     )
     state = _checkpoint(run_dir, state, "normalized")
+
+    _emit(
+        progress_cb,
+        "Preparing calibration features and checking local KPI models…",
+        0.89,
+        "normalize",
+    )
+    from calibration import prepare_calibration_bundle
+
+    calibration = prepare_calibration_bundle(run_dir, root)
+    metadata["calibration"] = calibration
+    _atomic_json(metadata_path, metadata)
 
     _emit(
         progress_cb,
