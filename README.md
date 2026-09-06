@@ -20,7 +20,7 @@ The repository now contains the first executable-oriented MVP architecture:
 - interactive 3D left/right cortical surfaces;
 - local HTML brain report.
 
-**Important:** the code path is implemented, but it still needs a real Windows end-to-end validation run on target hardware before calling the MVP production-ready.
+**Windows MVP validation:** one real 28.23 s creative has now completed end-to-end on a 12-thread CPU-only Windows PC, producing 29 temporal windows × 20,484 cortical vertices, persistent cache/resume state, normalized outputs and an HTML report. This validates the current MVP path, not a universal hardware minimum.
 
 ## Why this path
 
@@ -162,3 +162,18 @@ Resume behavior:
 ### Windows DataLoader safe mode
 
 The official TRIBE configuration can request around 20 DataLoader worker processes. On Windows this means process spawning and can exceed the practical capacity of a normal desktop. The runner therefore forces `data.num_workers = 0` for Windows/CPU inference and caps CPU batch size at 4. This prioritizes stability and resumability over a small amount of downstream loader parallelism; V-JEPA2 remains the dominant compute cost.
+
+
+## Empirical campaign calibration
+
+Completed runs now expose a **Dados reais / Calibração** workflow. Real campaign outcomes are saved next to each creative and upserted into a local shared dataset under:
+
+```
+<TRIBEv2 Results>/.calibration/
+```
+
+The calibration layer builds a fixed neural feature vector from the TRIBE output and trains one small regularized model per KPI only after enough real labels exist.
+
+The app also detects complete neural checkpoints. For a previously processed creative, the main action becomes **REPROCESSAR CACHE**, which skips V-JEPA2/TRIBE and only rebuilds the inexpensive downstream stages.
+
+See [CALIBRATION.md](CALIBRATION.md) for targets, uncertainty policy, sample thresholds and model details.
