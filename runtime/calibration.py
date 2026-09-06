@@ -254,6 +254,11 @@ def save_campaign_metrics(
         key: _safe_number(targets.get(key))
         for key in TARGET_FIELDS
     }
+    if not any(value is not None for value in clean_targets.values()):
+        raise ValueError(
+            "Enter at least one measured campaign outcome. Blank/guessed labels are not saved."
+        )
+
     clean_context: dict[str, Any] = {}
     for key in CONTEXT_FIELDS:
         if key in ("spend", "impressions"):
