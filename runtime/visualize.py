@@ -313,19 +313,29 @@ def create_report_assets(
 
     timeline_png = _save_timeline(timeline_csv, output_dir, normalized)
 
-    brain_note = ""
+    notes: list[str] = []
     interactive: list[Path] = []
     peak_maps: list[dict] = []
+
+    # Static cortical maps are the core visualization and should remain usable
+    # even if an optional renderer (for example Plotly) is unavailable.
     try:
         brain_maps = _save_brain_maps(predictions, output_dir)
-        interactive = _save_interactive_brains(predictions, output_dir)
-        peak_maps = _save_peak_maps(predictions, normalized, output_dir)
     except Exception as exc:
         brain_maps = _fallback_brain_vector(predictions, output_dir)
-        brain_note = (
-            "The cortical surface renderer was unavailable, so the report used a "
-            f"vertex-space fallback. Renderer error: {exc}"
-        )
+        notes.append(f"Static cortical surface rendering failed: {exc}")
+
+    try:
+        interactive = _save_interactive_brains(predictions, output_dir)
+    except Exception as exc:
+        notes.append(f"Interactive 3D cortex unavailable: {exc}")
+
+    try:
+        peak_maps = _save_peak_maps(predictions, normalized, output_dir)
+    except Exception as exc:
+        notes.append(f"Key-moment cortical maps unavailable: {exc}")
+
+    brain_note = " ".join(notes)
 
     aggregate_imgs = "".join(
         f'<img src="{html.escape(p.name)}" alt="brain map">'
