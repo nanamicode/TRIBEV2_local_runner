@@ -24,7 +24,7 @@ jobs:
         run: python -m pip install pyinstaller
 
       - name: Validate runtime Python syntax
-        run: python -m py_compile runtime/app.py runtime/engine.py runtime/visualize.py runtime/normalize.py
+        run: python -m py_compile runtime/app.py runtime/engine.py runtime/visualize.py runtime/normalize.py runtime/calibration.py
 
       - name: Build bootstrap EXE
         shell: cmd
