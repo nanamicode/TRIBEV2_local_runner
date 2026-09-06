@@ -14,7 +14,7 @@ from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from engine import get_cached_run_status, get_hardware_summary, run_video
-from calibration import CONTEXT_FIELDS, TARGET_FIELDS, save_campaign_metrics
+from calibration import CONTEXT_FIELDS, MIN_TRAIN_SAMPLES, TARGET_FIELDS, save_campaign_metrics
 
 
 APP_NAME = "TRIBE v2 Local Runner"
@@ -823,7 +823,7 @@ class App(tk.Tk):
             text=(
                 "Preencha somente números medidos para ESTE criativo. "
                 "Campos vazios são ignorados. O sistema só treina previsores após "
-                f"{12} criativos rotulados e marca 12–29 amostras como experimental."
+                f"{MIN_TRAIN_SAMPLES} criativos rotulados e marca 12–29 amostras como experimental."
             ),
             bg=BG,
             fg=MUTED,
