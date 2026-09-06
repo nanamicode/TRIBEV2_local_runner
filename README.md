@@ -10,12 +10,15 @@ The repository now contains the first executable-oriented MVP architecture:
 - per-user/self-contained Python 3.11 installation;
 - automatic dependency installation;
 - automatic model download on first inference;
-- simple desktop UI: choose video -> choose output -> analyze;
+- desktop UI with explicit pipeline stages, current objective, dual progress bars and live terminal activity;
 - quantized V-JEPA2/TRIBE-compatible **vision-only** path;
 - raw cortical prediction export;
-- timeline CSV;
-- fsaverage5 cortical activation images;
-- local HTML report.
+- robust within-clip normalization and Destrieux/fsaverage5 region aggregation;
+- compact ChatGPT-ready neural summary + analysis prompt;
+- whole-creative cortical maps;
+- key-moment cortical maps;
+- interactive 3D left/right cortical surfaces;
+- local HTML brain report.
 
 **Important:** the code path is implemented, but it still needs a real Windows end-to-end validation run on target hardware before calling the MVP production-ready.
 
@@ -42,13 +45,19 @@ The selected long-term optimization path is **native Rust**, using the public `e
 6. Click **Analyze video locally**.
 7. On first use the model files are downloaded and cached.
 8. The result folder receives:
-   - `brain_predictions.npz`
-   - `timeline.csv`
-   - `brain_left_lateral.png`
-   - `brain_right_lateral.png`
-   - `activation_timeline.png`
-   - `run_metadata.json`
-   - `report.html`
+   - `brain_predictions.npz` — full raw cortical matrix;
+   - `timeline.csv` — original prediction timeline;
+   - `chatgpt_brain_summary.json` — compact AI-readable neural package;
+   - `CHATGPT_ANALYSIS_PROMPT.txt` — ready-to-use interpretation instructions;
+   - `creative_signature.json` — one-creative feature signature for future calibration;
+   - `normalized_timeline.csv` — robust within-clip temporal normalization;
+   - `roi_summary.csv` — Destrieux cortical-region aggregation;
+   - `brain_left_lateral.png` / `brain_right_lateral.png`;
+   - `brain_3d_left.html` / `brain_3d_right.html` when the interactive renderer is available;
+   - `brain_peak_*.png` — strongest predicted cortical moments;
+   - `activation_timeline.png`;
+   - `run_metadata.json`;
+   - `report.html` — visual brain report.
 
 No inference VPS is required.
 
@@ -103,3 +112,30 @@ TRIBE v2 outputs are predicted **fMRI-like cortical responses for an average sub
 ## License warning
 
 Meta's TRIBE v2 release / pretrained weights are **CC BY-NC 4.0**. The runner does not bypass that restriction. If this becomes part of a commercial creative-analysis operation, the relevant permission/license must be resolved before deployment.
+
+
+## AI-readable normalization
+
+The runner does **not** send the full 20,484-vertex matrix to an LLM by default. After local inference it derives a compact, deterministic package containing:
+
+- robust temporal z-scores inside the clip;
+- mean absolute cortical response;
+- left/right descriptive balance;
+- spatial concentration;
+- peak moments with timestamps;
+- Destrieux region rankings on fsaverage5;
+- a compact creative signature for later cross-creative calibration.
+
+The compact file preserves links to the raw output while avoiding a huge token payload.
+
+### Marketing-metric boundary
+
+TRIBE output alone is not a validated CTR/CVR/CPA/ROAS predictor. The normalized package can support creative hypotheses and relative neural-pattern analysis. Numerical advertising metrics should only be predicted after collecting campaign outcomes and fitting/validating a calibration layer against the generated creative signatures.
+
+A practical future calibration table is:
+
+```
+creative_signature -> hook rate / hold rate / CTR / CVR / CPA / ROAS
+```
+
+This lets the expensive cortical inference remain local while a much smaller downstream model learns which neural signatures actually correlate with business outcomes.
