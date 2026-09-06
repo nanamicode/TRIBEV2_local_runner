@@ -224,6 +224,70 @@ def _fallback_brain_vector(predictions: np.ndarray, output_dir: Path) -> list[Pa
     return [out]
 
 
+def _calibration_card(output_dir: Path) -> str:
+    prediction_path = output_dir / "calibrated_predictions.json"
+    metrics_path = output_dir / "campaign_metrics.json"
+    features_path = output_dir / "calibration_features.json"
+
+    if prediction_path.exists():
+        try:
+            payload = json.loads(prediction_path.read_text(encoding="utf-8"))
+        except Exception:
+            payload = {}
+    else:
+        payload = {}
+
+    predictions = payload.get("predictions") or {}
+    rows = []
+    for key, item in predictions.items():
+        if not isinstance(item, dict) or "prediction" not in item:
+            continue
+        label = html.escape(str(item.get("label") or key))
+        value = float(item.get("prediction"))
+        quality = html.escape(str(item.get("quality") or "unknown"))
+        samples = item.get("samples")
+        interval = item.get("interval_80")
+        interval_text = ""
+        if isinstance(interval, list) and len(interval) == 2:
+            interval_text = f" • 80% CV-residual band {float(interval[0]):.2f}–{float(interval[1]):.2f}"
+        rows.append(
+            f'<div class="metric"><span>{label}</span><strong>{value:.2f}</strong>'
+            f'<small>{quality} • n={samples}{html.escape(interval_text)}</small></div>'
+        )
+
+    if rows:
+        body = (
+            '<div class="callout"><p><strong>Empirical calibration is active.</strong> '
+            'These KPI values come from a downstream model fitted to real campaign outcomes, '
+            'not directly from TRIBE v2.</p></div>'
+            f'<div class="metrics">{"".join(rows)}</div>'
+        )
+    else:
+        body = (
+            '<div class="callout"><p><strong>Calibration dataset is still collecting labels.</strong> '
+            'Add measured campaign outcomes for completed creatives. The runner will only train '
+            'local KPI models after the minimum sample count is reached.</p></div>'
+        )
+
+    links = []
+    if features_path.exists():
+        links.append('<a href="calibration_features.json">calibration_features.json</a>')
+    if metrics_path.exists():
+        links.append('<a href="campaign_metrics.json">campaign_metrics.json</a>')
+    if prediction_path.exists():
+        links.append('<a href="calibrated_predictions.json">calibrated_predictions.json</a>')
+    links.append('<a href="campaign_metrics_template.json">campaign_metrics_template.json</a>')
+
+    return f"""
+    <div class="card">
+      <h2>Campaign calibration layer</h2>
+      {body}
+      <div class="download-grid">{"".join(links)}</div>
+      <p class="hint">Context such as spend, placement and IDs is stored for auditability; pre-launch neural models are trained only from TRIBE-derived features to avoid campaign-leakage shortcuts.</p>
+    </div>
+    """
+
+
 def _signature_cards(normalized: dict | None) -> str:
     if not normalized:
         return ""
@@ -450,6 +514,8 @@ pre {{ white-space:pre-wrap; color:#cbd1dc; font-size:12px; overflow:auto; }}
   </div>
   {normalized_links}
 </div>
+
+{_calibration_card(output_dir)}
 
 <div class="card">
   <h2>Scientific interpretation boundary</h2>
