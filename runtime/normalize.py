@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 
 
 def _safe_float(value: float | np.floating | int) -> float:
@@ -155,6 +155,23 @@ def _peak_events(
         candidates = list(zip(peak_indices.tolist(), prominences.tolist()))
     except Exception:
         candidates = []
+
+    # scipy.find_peaks intentionally ignores boundary samples. In short ads the
+    # final frame/CTA can be the strongest event, so explicitly consider both
+    # endpoints when they rise meaningfully above their only neighbor.
+    if len(global_z) >= 2:
+        endpoint_candidates = []
+        left_prominence = float(global_z[0] - global_z[1])
+        right_prominence = float(global_z[-1] - global_z[-2])
+        if global_z[0] > global_z[1] and left_prominence >= 0.65:
+            endpoint_candidates.append((0, left_prominence))
+        if global_z[-1] > global_z[-2] and right_prominence >= 0.65:
+            endpoint_candidates.append((len(global_z) - 1, right_prominence))
+
+        existing = {idx for idx, _ in candidates}
+        for item in endpoint_candidates:
+            if item[0] not in existing:
+                candidates.append(item)
 
     if not candidates and len(global_z):
         candidates = [(int(i), float(global_z[i])) for i in np.argsort(global_z)[-5:]]
