@@ -139,3 +139,26 @@ creative_signature -> hook rate / hold rate / CTR / CVR / CPA / ROAS
 ```
 
 This lets the expensive cortical inference remain local while a much smaller downstream model learns which neural signatures actually correlate with business outcomes.
+
+
+## Crash-safe resume / persistent analysis memory
+
+Long CPU-only V-JEPA2 runs can take hours. The runner now keeps persistent state instead of treating every launch as a fresh analysis.
+
+For each video/model combination it creates a stable run folder keyed by a content-aware fingerprint. Inside it:
+
+- `run_state.json` records the last completed stage and attempt number;
+- `.resume/prediction_parts/` stores cortical-inference batches as they finish;
+- `brain_predictions.npz` + `timeline.csv` form the complete raw checkpoint;
+- the V-JEPA2/neuralset EXCA cache remains persistent under `%LOCALAPPDATA%\T2F` on Windows.
+
+Resume behavior:
+
+1. If V-JEPA2 features already exist in the EXCA cache, they are reused automatically.
+2. If some cortical-inference batches were already saved, they are loaded instead of recomputed.
+3. If the complete raw cortical matrix exists, V-JEPA2 and TRIBE inference are skipped entirely and the runner resumes at normalization/report generation.
+4. Existing normalized/report outputs are reused too.
+
+### Windows DataLoader safe mode
+
+The official TRIBE configuration can request around 20 DataLoader worker processes. On Windows this means process spawning and can exceed the practical capacity of a normal desktop. The runner therefore forces `data.num_workers = 0` for Windows/CPU inference and caps CPU batch size at 4. This prioritizes stability and resumability over a small amount of downstream loader parallelism; V-JEPA2 remains the dominant compute cost.
