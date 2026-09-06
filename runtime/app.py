@@ -13,7 +13,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
-from engine import get_hardware_summary, run_video
+from engine import get_cached_run_status, get_hardware_summary, run_video
+from calibration import CONTEXT_FIELDS, TARGET_FIELDS, save_campaign_metrics
 
 
 APP_NAME = "TRIBE v2 Local Runner"
@@ -132,9 +133,11 @@ class App(tk.Tk):
         self.phase_progress = tk.DoubleVar(value=0.0)
         self.phase_label = tk.StringVar(value="Aguardando")
         self.elapsed = tk.StringVar(value="00:00")
+        self.cache_hint = tk.StringVar(value="Selecione um vídeo para verificar o cache neural.")
         self._started_at: float | None = None
         self._current_stage: str | None = None
         self._last_report: Path | None = None
+        self._last_run_dir: Path | None = None
         self._stage_widgets: dict[str, dict[str, tk.Widget]] = {}
 
         self._configure_styles()
@@ -289,6 +292,14 @@ class App(tk.Tk):
             pady=8,
             cursor="hand2",
         ).grid(row=3, column=2, padx=(10, 0), pady=(10, 0))
+        tk.Label(
+            inner,
+            textvariable=self.cache_hint,
+            bg=PANEL,
+            fg="#86efac",
+            font=("Segoe UI", 8),
+            anchor="w",
+        ).grid(row=4, column=1, columnspan=2, sticky="w", pady=(8, 0))
         inner.columnconfigure(1, weight=1)
 
         control = tk.Frame(self, bg=BG)
@@ -325,6 +336,22 @@ class App(tk.Tk):
             cursor="hand2",
         )
         self.open_button.pack(side="left", padx=(10, 0))
+
+        self.calibration_button = tk.Button(
+            control,
+            text="DADOS REAIS / CALIBRAÇÃO",
+            command=self._open_calibration_dialog,
+            bg="#202431",
+            fg=TEXT,
+            activebackground="#2a3040",
+            activeforeground=TEXT,
+            relief="flat",
+            padx=18,
+            pady=12,
+            state="disabled",
+            cursor="hand2",
+        )
+        self.calibration_button.pack(side="left", padx=(10, 0))
 
         tk.Label(
             control,
@@ -503,11 +530,43 @@ class App(tk.Tk):
         )
         if p:
             self.video.set(p)
+            self._refresh_cache_status()
 
     def _choose_output(self):
         p = filedialog.askdirectory(title="Escolha a pasta de resultados")
         if p:
             self.output.set(p)
+            self._refresh_cache_status()
+
+    def _refresh_cache_status(self):
+        video = Path(self.video.get())
+        out = Path(self.output.get())
+        if not video.is_file():
+            self.cache_hint.set("Selecione um vídeo para verificar o cache neural.")
+            self.run_button.configure(text="ANALISAR VÍDEO")
+            return
+        status = get_cached_run_status(video, out)
+        if status.get("raw_complete"):
+            self.cache_hint.set(
+                "CACHE NEURAL COMPLETO • V-JEPA2/TRIBE serão pulados; só pós-processamento será refeito."
+            )
+            self.run_button.configure(text="REPROCESSAR CACHE")
+            run_dir = status.get("run_dir")
+            if run_dir:
+                self._last_run_dir = Path(run_dir)
+                report = self._last_run_dir / "report.html"
+                if report.exists():
+                    self._last_report = report
+                    self.open_button.configure(state="normal")
+                self.calibration_button.configure(state="normal")
+        elif status.get("exists"):
+            self.cache_hint.set(
+                f"Execução parcial encontrada • retomada automática a partir de {status.get('stage') or 'checkpoint'}."
+            )
+            self.run_button.configure(text="RETOMAR ANÁLISE")
+        else:
+            self.cache_hint.set("Sem cache neural completo • este vídeo exigirá inferência V-JEPA2/TRIBE.")
+            self.run_button.configure(text="ANALISAR VÍDEO")
 
     def _start(self):
         video = Path(self.video.get())
@@ -520,6 +579,7 @@ class App(tk.Tk):
 
         self.run_button.configure(state="disabled")
         self.open_button.configure(state="disabled")
+        self.calibration_button.configure(state="disabled")
         self.overall_progress.set(0)
         self.phase_progress.set(0)
         self.status.set("Processando")
@@ -670,7 +730,10 @@ class App(tk.Tk):
                     )
                     self.run_button.configure(state="normal")
                     self._last_report = result.report_path
+                    self._last_run_dir = result.output_dir
                     self.open_button.configure(state="normal")
+                    self.calibration_button.configure(state="normal")
+                    self._refresh_cache_status()
                     self._append_log(
                         f"Arquivos prontos em: {result.output_dir}",
                         "good",
@@ -710,6 +773,169 @@ class App(tk.Tk):
             seconds = int(time.monotonic() - self._started_at)
             self.elapsed.set(f"{seconds // 60:02d}:{seconds % 60:02d}")
         self.after(1000, self._tick)
+
+    def _open_calibration_dialog(self):
+        run_dir = self._last_run_dir
+        if run_dir is None or not run_dir.exists():
+            messagebox.showerror(
+                APP_NAME,
+                "Nenhuma análise concluída foi encontrada para receber métricas reais.",
+            )
+            return
+
+        existing = {}
+        metrics_path = run_dir / "campaign_metrics.json"
+        if metrics_path.exists():
+            try:
+                import json
+                existing = json.loads(metrics_path.read_text(encoding="utf-8"))
+            except Exception:
+                existing = {}
+
+        win = tk.Toplevel(self)
+        win.title("TRIBE v2 • Dados reais / Calibração")
+        win.geometry("760x760")
+        win.minsize(680, 620)
+        win.configure(bg=BG)
+        win.transient(self)
+
+        canvas = tk.Canvas(win, bg=BG, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(win, orient="vertical", command=canvas.yview)
+        frame = tk.Frame(canvas, bg=BG)
+        frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        canvas.create_window((0, 0), window=frame, anchor="nw", width=720)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        tk.Label(
+            frame,
+            text="Calibração com performance real",
+            bg=BG,
+            fg=TEXT,
+            font=("Segoe UI", 22, "bold"),
+        ).pack(anchor="w", padx=24, pady=(24, 4))
+        tk.Label(
+            frame,
+            text=(
+                "Preencha somente números medidos para ESTE criativo. "
+                "Campos vazios são ignorados. O sistema só treina previsores após "
+                f"{12} criativos rotulados e marca 12–29 amostras como experimental."
+            ),
+            bg=BG,
+            fg=MUTED,
+            justify="left",
+            wraplength=650,
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", padx=24, pady=(0, 18))
+
+        target_vars = {}
+        context_vars = {}
+        existing_targets = existing.get("targets") or {}
+        existing_context = existing.get("context") or {}
+
+        section = tk.Frame(frame, bg=PANEL, highlightbackground=BORDER, highlightthickness=1)
+        section.pack(fill="x", padx=24, pady=(0, 14))
+        tk.Label(
+            section,
+            text="MÉTRICAS DE RESULTADO",
+            bg=PANEL,
+            fg="#a78bfa",
+            font=("Segoe UI", 9, "bold"),
+        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=16, pady=(14, 10))
+
+        for row_idx, (key, label) in enumerate(TARGET_FIELDS.items(), start=1):
+            var = tk.StringVar()
+            if existing_targets.get(key) is not None:
+                var.set(str(existing_targets.get(key)))
+            target_vars[key] = var
+            tk.Label(section, text=label, bg=PANEL, fg=MUTED).grid(
+                row=row_idx, column=0, sticky="w", padx=16, pady=5
+            )
+            ttk.Entry(section, textvariable=var, style="Dark.TEntry", width=28).grid(
+                row=row_idx, column=1, sticky="ew", padx=(10, 16), pady=5
+            )
+        section.columnconfigure(1, weight=1)
+
+        context_section = tk.Frame(
+            frame, bg=PANEL, highlightbackground=BORDER, highlightthickness=1
+        )
+        context_section.pack(fill="x", padx=24, pady=(0, 14))
+        tk.Label(
+            context_section,
+            text="CONTEXTO DA CAMPANHA (armazenado, não usado como atalho neural)",
+            bg=PANEL,
+            fg="#a78bfa",
+            font=("Segoe UI", 9, "bold"),
+        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=16, pady=(14, 10))
+
+        for row_idx, (key, label) in enumerate(CONTEXT_FIELDS.items(), start=1):
+            var = tk.StringVar()
+            if existing_context.get(key) is not None:
+                var.set(str(existing_context.get(key)))
+            context_vars[key] = var
+            tk.Label(context_section, text=label, bg=PANEL, fg=MUTED).grid(
+                row=row_idx, column=0, sticky="w", padx=16, pady=5
+            )
+            ttk.Entry(
+                context_section, textvariable=var, style="Dark.TEntry", width=28
+            ).grid(row=row_idx, column=1, sticky="ew", padx=(10, 16), pady=5)
+        context_section.columnconfigure(1, weight=1)
+
+        status_var = tk.StringVar(value="")
+
+        def save():
+            try:
+                result = save_campaign_metrics(
+                    run_dir=run_dir,
+                    output_root=Path(self.output.get()),
+                    targets={k: v.get() for k, v in target_vars.items()},
+                    context={k: v.get() for k, v in context_vars.items()},
+                )
+                training = result.get("training") or {}
+                records = result.get("records", 0)
+                trained = training.get("trained_model_count", 0)
+                status_var.set(
+                    f"Salvo • {records} criativo(s) no dataset • {trained} modelo(s) calibrado(s) treinado(s)."
+                )
+                messagebox.showinfo(
+                    APP_NAME,
+                    (
+                        "Dados reais salvos.\n\n"
+                        f"Dataset: {result.get('dataset_path')}\n"
+                        f"Registros: {records}\n"
+                        f"Modelos treinados: {trained}\n\n"
+                        "Enquanto não houver amostras suficientes, nenhuma métrica "
+                        "será tratada como previsão calibrada."
+                    ),
+                )
+            except Exception as exc:
+                messagebox.showerror(APP_NAME, f"Falha ao salvar calibração:\n\n{exc}")
+
+        tk.Button(
+            frame,
+            text="SALVAR DADOS REAIS E ATUALIZAR CALIBRAÇÃO",
+            command=save,
+            bg=ACCENT,
+            fg="white",
+            activebackground="#6d28d9",
+            activeforeground="white",
+            relief="flat",
+            padx=18,
+            pady=12,
+            font=("Segoe UI", 9, "bold"),
+            cursor="hand2",
+        ).pack(anchor="w", padx=24, pady=(0, 8))
+        tk.Label(
+            frame,
+            textvariable=status_var,
+            bg=BG,
+            fg="#86efac",
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", padx=24, pady=(0, 24))
 
     def _open_report(self):
         if self._last_report and self._last_report.exists():
