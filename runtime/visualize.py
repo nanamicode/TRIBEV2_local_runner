@@ -16,6 +16,39 @@ import matplotlib
 matplotlib.use("Agg", force=True)
 
 
+def _write_bytes_atomic(path: Path, data: bytes) -> None:
+    """Write through pathlib instead of letting plotting backends open Windows paths."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(data)
+    tmp.replace(path)
+
+
+def _save_figure_png(figure, path: Path, dpi: int | None = None) -> Path:
+    """Render a Matplotlib/Nilearn figure in memory, then atomically write the PNG.
+
+    This avoids backend-specific Windows path handling. It is especially useful
+    for cached run directories whose names come from creative filenames.
+    """
+    from io import BytesIO
+
+    buffer = BytesIO()
+    kwargs = {"format": "png"}
+    if dpi is not None:
+        kwargs["dpi"] = dpi
+    figure.savefig(buffer, **kwargs)
+    _write_bytes_atomic(path, buffer.getvalue())
+    return path
+
+
+def _existing_brain_maps(output_dir: Path) -> list[Path]:
+    candidates = [
+        output_dir / "brain_left_lateral.png",
+        output_dir / "brain_right_lateral.png",
+    ]
+    return candidates if all(p.exists() and p.stat().st_size > 0 for p in candidates) else []
+
+
 def _save_timeline(
     timeline_csv: Path,
     output_dir: Path,
@@ -61,7 +94,7 @@ def _save_timeline(
             )
 
     fig.tight_layout()
-    fig.savefig(out)
+    _save_figure_png(fig, out)
     plt.close(fig)
     return out
 
@@ -103,7 +136,7 @@ def _save_brain_maps(predictions: np.ndarray, output_dir: Path) -> list[Path]:
             vmax=vmax,
             symmetric_cbar=False,
         )
-        display.savefig(out, dpi=170)
+        _save_figure_png(display.figure, out, dpi=170)
         plt.close(display.figure)
         outputs.append(out)
     return outputs
@@ -200,7 +233,7 @@ def _save_peak_maps(
                 vmax=vmax,
                 symmetric_cbar=False,
             )
-            display.savefig(out, dpi=150)
+            _save_figure_png(display.figure, out, dpi=150)
             plt.close(display.figure)
             item["images"].append(out.name)
         results.append(item)
@@ -343,7 +376,7 @@ def _fallback_brain_vector(predictions: np.ndarray, output_dir: Path) -> list[Pa
     ax.set_xlabel("fsaverage5 vertex")
     ax.set_ylabel("Mean absolute response")
     fig.tight_layout()
-    fig.savefig(out)
+    _save_figure_png(fig, out)
     plt.close(fig)
     return [out]
 
@@ -527,8 +560,23 @@ def create_report_assets(
     try:
         brain_maps = _save_brain_maps(predictions, output_dir)
     except Exception as exc:
-        brain_maps = _fallback_brain_vector(predictions, output_dir)
-        notes.append(f"Static cortical surface rendering failed: {exc}")
+        previous = _existing_brain_maps(output_dir)
+        if previous:
+            brain_maps = previous
+            notes.append(
+                "Static cortical re-render failed, so the last valid cached brain maps "
+                f"were preserved. Renderer error: {exc}"
+            )
+        else:
+            try:
+                brain_maps = _fallback_brain_vector(predictions, output_dir)
+                notes.append(f"Static cortical surface rendering failed: {exc}")
+            except Exception as fallback_exc:
+                brain_maps = []
+                notes.append(
+                    "Static cortical rendering and its diagnostic fallback both failed. "
+                    f"Surface error: {exc}; fallback error: {fallback_exc}"
+                )
 
     try:
         interactive = _save_interactive_brains(predictions, output_dir)
@@ -556,6 +604,11 @@ def create_report_assets(
         f'<img src="{html.escape(p.name)}" alt="brain map">'
         for p in brain_maps
     )
+    if not aggregate_imgs:
+        aggregate_imgs = (
+            '<div class="render-placeholder">Static brain images were unavailable for '
+            'this post-processing pass. Neural predictions and normalized data remain intact.</div>'
+        )
 
     iframe_html = ""
     if len(interactive) == 2:
